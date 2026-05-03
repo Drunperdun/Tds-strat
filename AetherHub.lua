@@ -3355,37 +3355,7 @@ local function StartAutoGatling()
     end)
 end
 
-local function StartAutoPremium()
-    if AutoPremiumRunning or not Globals.AutoPremium or PremiumLoaded then return end
-    AutoPremiumRunning = true
-
-    task.spawn(function()
-        if GameState == "GAME" then
-            Window:Notify({
-                Title = "ADS",
-                Desc = "Loading Key System...",
-                Time = 3,
-                Type = "normal"
-            })
-
-            local success = TDS:Addons()
-            
-            if success then
-                Window:Notify({
-                    Title = "ADS",
-                    Desc = "Premium Unlocked!",
-                    Time = 3,
-                    Type = "normal"
-                })
-            else
-                task.wait(5)
-                AutoPremiumRunning = false 
-            end
-        else
-            AutoPremiumRunning = false
-        end
-    end)
-end
+-- Premium system removed (junkie cleaned)
 
 local function StartAutoPickups()
     if AutoPickupsRunning or not Globals.AutoPickups then return end
@@ -3394,100 +3364,28 @@ local function StartAutoPickups()
     task.spawn(function()
         while Globals.AutoPickups do
             local folder = workspace:FindFirstChild("Pickups")
-            local hrp = GetRoot()
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 
             if folder and hrp then
-                local char = hrp.Parent
-                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-                local function MoveToPos(TargetPos)
-                    if not humanoid then
-                        return false
-                    end
-                    local function MoveDirect(pos)
-                        humanoid:MoveTo(pos)
-                        local StartT = os.clock()
-                        while os.clock() - StartT < 2 do
-                            if not Globals.AutoPickups then
-                                return false
-                            end
-                            if (hrp.Position - pos).Magnitude < 4 then
-                                return true
-                            end
-                            task.wait(0.1)
-                        end
-                        return (hrp.Position - pos).Magnitude < 4
-                    end
-                    local path = PathfindingService:CreatePath({
-                        AgentRadius = 2,
-                        AgentHeight = 6,
-                        AgentCanJump = true,
-                        AgentJumpHeight = 7,
-                        AgentMaxSlope = 45
-                    })
-                    local ok = pcall(function()
-                        path:ComputeAsync(hrp.Position, TargetPos)
-                    end)
-                    if ok and path.Status == Enum.PathStatus.Success then
-                        local waypoints = path:GetWaypoints()
-                        local BlockedConn = nil
-                        BlockedConn = path.Blocked:Connect(function()
-                            if BlockedConn then
-                                BlockedConn:Disconnect()
-                            end
-                            if Globals.AutoPickups then
-                                task.spawn(function()
-                                    MoveToPos(TargetPos)
-                                end)
-                            end
-                        end)
-                        for _, wp in ipairs(waypoints) do
-                            if not Globals.AutoPickups then
-                                if BlockedConn then
-                                    BlockedConn:Disconnect()
-                                end
-                                return false
-                            end
-                            if wp.Action == Enum.PathWaypointAction.Jump then
-                                humanoid.Jump = true
-                            end
-                            if not MoveDirect(wp.Position) then
-                                if BlockedConn then
-                                    BlockedConn:Disconnect()
-                                end
-                                return false
-                            end
-                        end
-                        if BlockedConn then
-                            BlockedConn:Disconnect()
-                        end
-                        return true
-                    end
-                    return MoveDirect(TargetPos)
-                end
+                local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
 
                 for _, item in ipairs(folder:GetChildren()) do
                     if not Globals.AutoPickups then break end
 
                     if item:IsA("MeshPart") and (item.Name == "Bunz" or item.Name == "Lorebook" or item.Name == "SnowCharm") then
-                        if not IsVoidCharm(item) then
+                        if math.abs(item.Position.Y) < 999999 then
                             if Globals.PickupMethod == "Instant" then
                                 hrp.CFrame = item.CFrame * CFrame.new(0, 3, 0)
-                                task.wait(0.2)
-                                task.wait(0.3)
-                            else
-                                local TargetPos = item.Position + Vector3.new(0, 3, 0)
-                                MoveToPos(TargetPos)
-                                task.wait(0.2)
-                                task.wait(0.3)
+                            elseif humanoid then
+                                humanoid:MoveTo(item.Position + Vector3.new(0, 3, 0))
                             end
+                            task.wait(0.6)
                         end
                     end
                 end
             end
-
-            task.wait(1)
+            task.wait(0.8)
         end
-
         AutoPickupsRunning = false
     end)
 end
