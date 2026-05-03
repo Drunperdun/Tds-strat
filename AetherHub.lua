@@ -30,6 +30,7 @@ local function StartAntiStuck()
 
     LocalPlayer:GetAttributeChangedSignal("Loading"):Connect(StuckState)
     LocalPlayer:GetAttributeChangedSignal("Teleporting"):Connect(StuckState)
+
     StuckState()
 end
 
@@ -60,6 +61,7 @@ task.spawn(function()
             end
         end
     end
+
     DisableIdled()
 end)
 
@@ -109,7 +111,8 @@ end
 
 StartAntiAfk()
 
-local SendRequest = request or http_request or httprequest or (GetDevice and GetDevice().request)
+local SendRequest = request or http_request or httprequest
+    or GetDevice and GetDevice().request
 
 if not SendRequest then 
     warn("failure: no http function") 
@@ -131,8 +134,10 @@ local AutoMilitaryBaseRunning = false
 local SellFarmsRunning = false
 local AutoGatlingRunning = false
 local GatlingExecuted = false
+local StackerErrorShown = false
+-- Premium variables removed (junkie cleaned)
 
-local MaxPathDistance = 300
+local MaxPathDistance = 300 -- default
 local MilMarker = nil
 local MercMarker = nil
 
@@ -153,6 +158,9 @@ local DefaultSettings = {
     MilitaryPath = false,
     MercenaryPath = false,
     AutoSkip = false,
+    AutoOpenCrates = false,
+    SelectedCrate = "All",
+    AutoReady = false,
     AutoChain = false,
     AutoGatling = false,
     SupportCaravan = false,
@@ -187,9 +195,13 @@ local TimeScaleValues = {0.5, 1, 1.5, 2}
 
 local function NormalizeTimeScaleValue(val)
     val = tonumber(val)
-    if not val then return nil end
+    if not val then
+        return nil
+    end
     for _, v in ipairs(TimeScaleValues) do
-        if v == val then return v end
+        if v == val then
+            return v
+        end
     end
     return nil
 end
@@ -209,6 +221,7 @@ local ApplyTimeScaleOnce
 
 local LastState = {}
 
+-- // icon item ids ill add more soon arghh
 local ItemNames = {
     ["17447507910"] = "Timescale Ticket(s)",
     ["17438486690"] = "Range Flag(s)",
@@ -231,6 +244,7 @@ local ItemNames = {
     ["139414922355803"] = "Present Clusters(s)"
 }
 
+-- // tower management core
 TDS = {
     PlacedTowers = {},
     ActiveStrat = true,
@@ -249,9 +263,11 @@ TDS["matchmaking_map"] = TDS.MatchmakingMap
 
 local UpgradeHistory = {}
 
+-- // shared for addons
 shared.TDSTable = TDS
 shared["TDS_Table"] = TDS
 
+-- // load & save
 local function SaveSettings()
     local DataToSave = {}
     for key, _ in pairs(DefaultSettings) do
@@ -265,13 +281,19 @@ local function LoadSettings()
         local success, data = pcall(function()
             return HttpService:JSONDecode(readfile(FileName))
         end)
+
         if success and type(data) == "table" then
             for key, DefaultVal in pairs(DefaultSettings) do
-                Globals[key] = data[key] ~= nil and data[key] or DefaultVal
+                if data[key] ~= nil then
+                    Globals[key] = data[key]
+                else
+                    Globals[key] = DefaultVal
+                end
             end
             return
         end
     end
+
     for key, value in pairs(DefaultSettings) do
         Globals[key] = value
     end
@@ -294,7 +316,6 @@ local function Apply3dRendering()
     else
         RunService:Set3dRenderingEnabled(true)
     end
-    -- black screen logic (оставлено как было)
     local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
     local gui = PlayerGui and PlayerGui:FindFirstChild("ADS_BlackScreen")
     if Globals.Disable3DRendering then
@@ -316,7 +337,9 @@ local function Apply3dRendering()
         end
         gui.Enabled = true
     else
-        if gui then gui.Enabled = false end
+        if gui then
+            gui.Enabled = false
+        end
     end
 end
 
@@ -889,6 +912,8 @@ local function MissionsUIFix()
     end)
 end
 
+-- Premium junkie completely removed - script is 100% clean and free
+
 local function GetEquippedTowers()
     local towers = {}
     local StateReplicators = ReplicatedStorage:FindFirstChild("StateReplicators")
@@ -919,6 +944,85 @@ end
 
 CurrentEquippedTowers = GetEquippedTowers()
 
+local CrateList = {
+    "All", "Basic", "Premium", "Deluxe", "Golden", "Bunny", "Halloween 2019", 
+    "Party", "Toy", "Valentines", "Xmas 2019", "Spooky", "Pumpkin", "Frost", 
+    "Lovely", "Cold Front", "Ducky", "Vigilante", "Pirate", "Phantom", 
+    "Halloween", "Jolly", "Lunar", "Lovestruck", "UglyCrate", "Coin Crate", 
+    "Banned", "Christmas 2025", "Showtime", "Valentines 2026", "Shamrock",
+    "Low Grade", "Mid Grade", "High Grade"
+}
+
+local AutoOpenRunning = false
+
+local function StartAutoOpenCrates()
+    if AutoOpenRunning or not Globals.AutoOpenCrates then return end
+    AutoOpenRunning = true
+
+    for _, crateName in ipairs(CrateList) do
+        if crateName == "All" then continue end
+
+        task.spawn(function()
+            while Globals.AutoOpenCrates do
+                if Globals.SelectedCrate == "All" or Globals.SelectedCrate == crateName then
+                    local success, res = pcall(function()
+                        return RemoteFunc:InvokeServer("Inventory", "Open", "Crate", crateName)
+                    end)
+
+                    if success and type(res) == "table" then
+                        task.wait(0.1) 
+                    else
+                        task.wait(5)
+                    end
+                else
+                    task.wait(1)
+                end
+            end
+        end)
+    end
+
+    task.spawn(function()
+        repeat task.wait(1) until not Globals.AutoOpenCrates
+        AutoOpenRunning = false
+    end)
+end
+
+-- // voting & map selection
+local function RunVoteSkip()
+    while true do
+        local success = pcall(function()
+            RemoteFunc:InvokeServer("Voting", "Skip")
+        end)
+        if success then break end
+        task.wait(0.2)
+    end
+end
+
+local AutoReadyRunning = false
+local function StartAutoReady()
+    if AutoReadyRunning or not Globals.AutoReady then return end
+    AutoReadyRunning = true
+    task.spawn(function()
+        while Globals.AutoReady do
+            if GameState == "GAME" then
+                pcall(function()
+                    local VoteUi = PlayerGui:FindFirstChild("ReactOverridesVote")
+                    local Container = VoteUi and VoteUi:FindFirstChild("Frame") 
+                        and VoteUi.Frame:FindFirstChild("votes") 
+                        and VoteUi.Frame.votes:FindFirstChild("container")
+                    local ReadyBtn = Container and Container:FindFirstChild("ready")
+                    
+                    if ReadyBtn and ReadyBtn.Visible == true then
+                        RunVoteSkip()
+                    end
+                end)
+            end
+            task.wait(1)
+        end
+        AutoReadyRunning = false
+    end)
+end
+
 -- // ui
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Sources/UI.lua"))()
 
@@ -940,12 +1044,23 @@ local Automation = Window:Tab({Title = "Automation", Icon = "bot"}) do
     
     Automation:Toggle({
         Title = "Auto Rejoin",
-        Desc = "Rejoins the gamemode after you've won and does the strategy again.",
+        Desc = "Rejoins the gamemode after you've won and does the strategy again",
         Value = Globals.AutoRejoin,
         Callback = function(v)
             SetSetting("AutoRejoin", v)
         end
     })
+
+    Automation:Toggle({
+    Title = "Auto Ready Up",
+    Desc = "Automatically readies up when starting a match",
+    Value = Globals.AutoReady,
+    Callback = function(v)
+        Globals.AutoReady = v
+        SetSetting("AutoReady", v)
+        if v then StartAutoReady() end
+    end
+    }) 
 
     Automation:Toggle({
         Title = "Auto Skip Waves",
@@ -1063,6 +1178,29 @@ local Automation = Window:Tab({Title = "Automation", Icon = "bot"}) do
             task.wait(3)
         end
     end)
+
+    Automation:Section({Title = "Inventory Management"})
+
+    Automation:Toggle({
+    Title = "Auto Open Crates",
+    Desc = "Periodically attempts to open selected crates.",
+    Value = Globals.AutoOpenCrates or false,
+    Callback = function(v)
+        Globals.AutoOpenCrates = v
+        SetSetting("AutoOpenCrates", v)
+        if v then StartAutoOpenCrates() end
+    end
+    })
+
+    Automation:Dropdown({
+    Title = "Target Crate:",
+    List = CrateList,
+    Value = Globals.SelectedCrate or "All",
+    Callback = function(choice)
+        Globals.SelectedCrate = choice
+        SetSetting("SelectedCrate", choice)
+    end
+    })
 
     Automation:Section({Title = "Economy & Farming"})
     
@@ -1311,7 +1449,6 @@ local Interactive = Window:Tab({Title = "Interactive", Icon = "mouse-pointer-cli
             end
         end
     })
-  
 
     Interactive:Section({Title = "Player Statistics"})
     
@@ -2478,17 +2615,6 @@ local function HandlePostMatch()
     task.wait(9e9)
 end
 
--- // voting & map selection
-local function RunVoteSkip()
-    while true do
-        local success = pcall(function()
-            RemoteFunc:InvokeServer("Voting", "Skip")
-        end)
-        if success then break end
-        task.wait(0.2)
-    end
-end
-
 local function MatchReadyUp()
     local PlayerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
 
@@ -3355,7 +3481,7 @@ local function StartAutoGatling()
     end)
 end
 
--- Premium system removed (junkie cleaned)
+-- StartAutoPremium removed (junkie cleaned)
 
 local function StartAutoPickups()
     if AutoPickupsRunning or not Globals.AutoPickups then return end
@@ -3364,28 +3490,100 @@ local function StartAutoPickups()
     task.spawn(function()
         while Globals.AutoPickups do
             local folder = workspace:FindFirstChild("Pickups")
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local hrp = GetRoot()
 
             if folder and hrp then
-                local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                local char = hrp.Parent
+                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                local function MoveToPos(TargetPos)
+                    if not humanoid then
+                        return false
+                    end
+                    local function MoveDirect(pos)
+                        humanoid:MoveTo(pos)
+                        local StartT = os.clock()
+                        while os.clock() - StartT < 2 do
+                            if not Globals.AutoPickups then
+                                return false
+                            end
+                            if (hrp.Position - pos).Magnitude < 4 then
+                                return true
+                            end
+                            task.wait(0.1)
+                        end
+                        return (hrp.Position - pos).Magnitude < 4
+                    end
+                    local path = PathfindingService:CreatePath({
+                        AgentRadius = 2,
+                        AgentHeight = 6,
+                        AgentCanJump = true,
+                        AgentJumpHeight = 7,
+                        AgentMaxSlope = 45
+                    })
+                    local ok = pcall(function()
+                        path:ComputeAsync(hrp.Position, TargetPos)
+                    end)
+                    if ok and path.Status == Enum.PathStatus.Success then
+                        local waypoints = path:GetWaypoints()
+                        local BlockedConn = nil
+                        BlockedConn = path.Blocked:Connect(function()
+                            if BlockedConn then
+                                BlockedConn:Disconnect()
+                            end
+                            if Globals.AutoPickups then
+                                task.spawn(function()
+                                    MoveToPos(TargetPos)
+                                end)
+                            end
+                        end)
+                        for _, wp in ipairs(waypoints) do
+                            if not Globals.AutoPickups then
+                                if BlockedConn then
+                                    BlockedConn:Disconnect()
+                                end
+                                return false
+                            end
+                            if wp.Action == Enum.PathWaypointAction.Jump then
+                                humanoid.Jump = true
+                            end
+                            if not MoveDirect(wp.Position) then
+                                if BlockedConn then
+                                    BlockedConn:Disconnect()
+                                end
+                                return false
+                            end
+                        end
+                        if BlockedConn then
+                            BlockedConn:Disconnect()
+                        end
+                        return true
+                    end
+                    return MoveDirect(TargetPos)
+                end
 
                 for _, item in ipairs(folder:GetChildren()) do
                     if not Globals.AutoPickups then break end
 
                     if item:IsA("MeshPart") and (item.Name == "Bunz" or item.Name == "Lorebook" or item.Name == "SnowCharm") then
-                        if math.abs(item.Position.Y) < 999999 then
+                        if not IsVoidCharm(item) then
                             if Globals.PickupMethod == "Instant" then
                                 hrp.CFrame = item.CFrame * CFrame.new(0, 3, 0)
-                            elseif humanoid then
-                                humanoid:MoveTo(item.Position + Vector3.new(0, 3, 0))
+                                task.wait(0.2)
+                                task.wait(0.3)
+                            else
+                                local TargetPos = item.Position + Vector3.new(0, 3, 0)
+                                MoveToPos(TargetPos)
+                                task.wait(0.2)
+                                task.wait(0.3)
                             end
-                            task.wait(0.6)
                         end
                     end
                 end
             end
-            task.wait(0.8)
+
+            task.wait(1)
         end
+
         AutoPickupsRunning = false
     end)
 end
@@ -3913,6 +4111,14 @@ task.spawn(function()
 
         if Globals.AutoGatling and not AutoGatlingRunning then
             StartAutoGatling()
+        end
+
+        if Globals.AutoOpenCrates and not AutoOpenRunning then
+            StartAutoOpenCrates()
+        end
+
+        if Globals.AutoReady and not AutoReadyRunning then
+            StartAutoReady()
         end
 
         task.wait(1)
