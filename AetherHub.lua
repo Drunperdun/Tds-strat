@@ -1,69 +1,91 @@
 local Globals = getgenv()
 
-local PlayersService = game:GetService("Players")
+local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
-local LocalPlayer = PlayersService.LocalPlayer or PlayersService.PlayerAdded:Wait()
+local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
-local AntiStuck = nil
-
-local function StartAntiStuck()
-    local function StuckState()
-        local isLoading = LocalPlayer:GetAttribute("Loading") == true
-        local isTeleporting = LocalPlayer:GetAttribute("Teleporting") == true
-
-        if isLoading or isTeleporting then
-            if not AntiStuck then
-                AntiStuck = task.spawn(function()
-                    task.wait(60)
-                    pcall(function()
-                        SmartTeleportToLobby()
-                    end)
-                end)
-            end
+local function SmartTeleportToLobby()
+    local lobbyId = 3260590327
+    pcall(function()
+        local platform = UserInputService:GetPlatform()
+        local IsMobile = (platform == Enum.Platform.IOS or platform == Enum.Platform.Android)
+        
+        if not IsMobile and Globals.PrivateCode and Globals.PrivateCode ~= "" then
+            game:GetService("ExperienceService"):LaunchExperience({
+                placeId = lobbyId, 
+                linkCode = Globals.PrivateCode
+            })
         else
-            if AntiStuck then
-                task.cancel(AntiStuck)
-                AntiStuck = nil
-            end
+            TeleportService:Teleport(lobbyId)
         end
-    end
-
-    LocalPlayer:GetAttributeChangedSignal("Loading"):Connect(StuckState)
-    LocalPlayer:GetAttributeChangedSignal("Teleporting"):Connect(StuckState)
-
-    StuckState()
+    end)
 end
 
-StartAntiStuck()
+local function Reconnect()
+    local initial = GuiService:GetErrorMessage()
+    if initial and initial ~= "" then
+        task.wait(5)
+        if GuiService:GetErrorMessage() == initial then
+            pcall(function()
+                TeleportService:TeleportReconnect()
+            end)
+        end
+    end
+end
+
+local function AntiStuck()
+    task.spawn(function()
+        local secondsStuck = 0
+
+        while true do 
+            task.wait(1)
+            
+            local attrLoading = LocalPlayer:GetAttribute("Loading") == true
+            local attrTeleporting = LocalPlayer:GetAttribute("Teleporting") == true
+            
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local loadScreen = pg and pg:FindFirstChild("LoadingScreen")
+            local loadContent = loadScreen and loadScreen:FindFirstChild("content")
+            local isLoadVisible = loadContent and loadContent.Visible == true
+            
+            local countScreen = pg and pg:FindFirstChild("PlayerCountdown")
+            local countFrame = countScreen and countScreen:FindFirstChild("Frame")
+            local isCountVisible = countFrame and countFrame.Visible == true
+
+            if attrLoading or attrTeleporting or isLoadVisible or isCountVisible then
+                secondsStuck = secondsStuck + 1
+                if secondsStuck >= 60 then
+                    pcall(SmartTeleportToLobby)
+                    secondsStuck = 0 
+                end
+            else
+                secondsStuck = 0 
+            end
+        end
+    end)
+end
+
+AntiStuck()
+task.spawn(Reconnect)
+GuiService.ErrorMessageChanged:Connect(Reconnect)
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
--- // services & main refs
-local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
 local RunService = game:GetService("RunService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local PathfindingService = game:GetService("PathfindingService")
 local HttpService = game:GetService("HttpService")
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local mouse = LocalPlayer:GetMouse()
 local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
 local RemoteEvent = ReplicatedStorage:WaitForChild("RemoteEvent")
-local mouse = LocalPlayer:GetMouse()
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local FileName = "ADS_Config.json"
-
-task.spawn(function()
-    local function DisableIdled()
-        local success, connections = pcall(getconnections, LocalPlayer.Idled)
-        if success then
-            for _, v in pairs(connections) do
-                v:Disable()
-            end
-        end
-    end
-
-    DisableIdled()
-end)
+local platform = UserInputService:GetPlatform()
+local IsMobile = (platform == Enum.Platform.IOS or platform == Enum.Platform.Android)
 
 task.spawn(function()
     LocalPlayer.Idled:Connect(function()
@@ -102,7 +124,7 @@ local function StartAntiAfk()
             task.wait(1)
             LobbyTimer = LobbyTimer + 1
             if LobbyTimer >= 600 then
-                TeleportService:Teleport(3260590327)
+                SmartTeleportToLobby()
                 break 
             end
         end
@@ -135,7 +157,7 @@ local SellFarmsRunning = false
 local AutoGatlingRunning = false
 local GatlingExecuted = false
 local StackerErrorShown = false
--- Premium variables removed (junkie cleaned)
+-- Premium junk removed (jnkie.com)
 
 local MaxPathDistance = 300 -- default
 local MilMarker = nil
@@ -163,10 +185,12 @@ local DefaultSettings = {
     AutoReady = false,
     AutoChain = false,
     AutoGatling = false,
+    AutoPremium = false,
     SupportCaravan = false,
     AutoDJ = false,
     AutoNecro = false,
     AutoRejoin = true,
+    PrivateCode = "",
     TimeScaleEnabled = false,
     TimeScaleValue = 2,
     SellFarms = false,
@@ -185,7 +209,7 @@ local DefaultSettings = {
     WebhookURL = "",
     PickupMethod = "Pathfinding",
     StreamerMode = false,
-    HideUsername = true,
+    HideUsername = false,
     StreamerName = "",
     tagName = "None",
     Modifiers = {},
@@ -277,26 +301,23 @@ local function SaveSettings()
 end
 
 local function LoadSettings()
+    local data = {}
     if isfile(FileName) then
-        local success, data = pcall(function()
-            return HttpService:JSONDecode(readfile(FileName))
+        pcall(function()
+            data = HttpService:JSONDecode(readfile(FileName))
         end)
+    end
 
-        if success and type(data) == "table" then
-            for key, DefaultVal in pairs(DefaultSettings) do
-                if data[key] ~= nil then
-                    Globals[key] = data[key]
-                else
-                    Globals[key] = DefaultVal
-                end
+    for key, DefaultVal in pairs(DefaultSettings) do
+        if Globals[key] == nil then
+            if data[key] ~= nil then
+                Globals[key] = data[key]
+            else
+                Globals[key] = DefaultVal
             end
-            return
         end
     end
-
-    for key, value in pairs(DefaultSettings) do
-        Globals[key] = value
-    end
+    
     SaveSettings()
 end
 
@@ -347,8 +368,8 @@ LoadSettings()
 Globals.TimeScaleValue = CoerceTimeScaleValue(Globals.TimeScaleValue, 2)
 Apply3dRendering()
 
-Globals.HideUsername = true
-SetSetting("HideUsername", true)
+Globals.HideUsername = false
+SetSetting("HideUsername", false)
 
 local isTagChangerRunning = false
 local tagChangerConn = nil
@@ -912,7 +933,9 @@ local function MissionsUIFix()
     end)
 end
 
--- Premium junkie completely removed - script is 100% clean and free
+local IsCurrentlyLoading = false
+
+-- TDS:Addons() junkie removed
 
 local function GetEquippedTowers()
     local towers = {}
@@ -998,45 +1021,127 @@ local function RunVoteSkip()
     end
 end
 
-local AutoReadyRunning = false
 local function StartAutoReady()
-    if AutoReadyRunning or not Globals.AutoReady then return end
+    if AutoReadyRunning or not Globals.AutoReady or GameState ~= "GAME" then return end
     AutoReadyRunning = true
+
     task.spawn(function()
-        while Globals.AutoReady do
-            if GameState == "GAME" then
-                pcall(function()
-                    local VoteUi = PlayerGui:FindFirstChild("ReactOverridesVote")
-                    local Container = VoteUi and VoteUi:FindFirstChild("Frame") 
-                        and VoteUi.Frame:FindFirstChild("votes") 
-                        and VoteUi.Frame.votes:FindFirstChild("container")
-                    local ReadyBtn = Container and Container:FindFirstChild("ready")
-                    
-                    if ReadyBtn and ReadyBtn.Visible == true then
-                        RunVoteSkip()
-                    end
-                end)
-            end
-            task.wait(1)
-        end
+        local VR = ReplicatedStorage:WaitForChild("StateReplicators"):WaitForChild("VoteReplicator")
+        
+        repeat task.wait(0.5) until VR:GetAttribute("Enabled") == true and VR:GetAttribute("Title") == "Ready?"
+        
+        RunVoteSkip()
+        
+        repeat task.wait(1) until VR:GetAttribute("Enabled") == false
+        
         AutoReadyRunning = false
     end)
 end
 
+local EasyModeRunning = false
+
+local function StartEasyMode()
+    if EasyModeRunning or not Globals.Easy then return end
+
+    EasyModeRunning = true
+
+    task.spawn(function()
+        local content = nil
+
+        while Globals.Easy and content == nil do
+            local success, res = pcall(function() 
+                return game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Easy.lua") 
+            end)
+
+            if success and type(res) == "string" then
+                content = res
+            else
+                task.wait(1)
+            end
+        end
+
+        if content then
+            while not (TDS and TDS.Loadout) do 
+                task.wait(0.5) 
+            end
+
+            local func = loadstring(content)
+
+            if func then
+                pcall(func)
+
+                Window:Notify({Title = "ADS", Desc = "Running...", Time = 3})
+            end
+        end
+
+        repeat task.wait(2) until not Globals.Easy or (GameState == "GAME" and not game:IsLoaded())
+
+        EasyModeRunning = false
+    end)
+end
+
 -- // ui
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Sources/UI.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Ceepizz/library/refs/heads/main/newlib"))()
 
 local Window = Library:Window({
-    Title = "Aether Hub",
-    Desc = "your #1 hub",
-    Theme = "Dark",
+    Title = "Aether Hub V2 by rya",
+    Desc = "Strat Made By TartBear",
+    Theme = "Pink",
     DiscordLink = "https://discord.gg/aetherhub",
-    Icon = 100189470230468,
+    Icon = 110574634491671,
     Config = {
         Keybind = Enum.KeyCode.LeftControl,
         Size = UDim2.new(0, 500, 0, 400)
     }
 })
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local PetalGui = Window -- reference to the window background
+local bg = game:GetService("CoreGui"):WaitForChild("Aether"):WaitForChild("Shadow"):WaitForChild("Background")
+
+local function startSakuraPetals()
+    local function spawnPetal()
+        local petal = Instance.new("ImageLabel")
+        petal.BackgroundTransparency = 1
+        petal.BorderSizePixel = 0
+        petal.ZIndex = 1
+        local size = math.random(8, 20)
+        petal.Size = UDim2.new(0, size, 0, size)
+        petal.Position = UDim2.new(math.random(0, 100) / 100, 0, -0.05, 0)
+        petal.Image = "rbxassetid://111368935477709"
+        petal.Rotation = math.random(0, 360)
+        petal.ImageTransparency = math.random(0, 3) / 10
+        petal.Parent = bg
+
+        local fallDuration = math.random(8, 14)
+        local targetX = petal.Position.X.Scale + math.random(30, 60) / 100
+
+        local tween = TweenService:Create(petal,
+            TweenInfo.new(fallDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+            {
+                Position = UDim2.new(targetX, 0, 1.05, 0),
+                Rotation = petal.Rotation + math.random(180, 720),
+                ImageTransparency = 0.9
+            }
+        )
+        tween:Play()
+        tween.Completed:Connect(function()
+            petal:Destroy()
+        end)
+    end
+
+    local elapsed = 0
+    RunService.Heartbeat:Connect(function(dt)
+        elapsed += dt
+        if elapsed >= 0.3 then
+            spawnPetal()
+            elapsed = 0
+        end
+    end)
+end
+
+startSakuraPetals()
 
 local Automation = Window:Tab({Title = "Automation", Icon = "bot"}) do
     
@@ -1050,6 +1155,27 @@ local Automation = Window:Tab({Title = "Automation", Icon = "bot"}) do
             SetSetting("AutoRejoin", v)
         end
     })
+
+    if not IsMobile then
+        Automation:Textbox({
+            Title = "Private Server Code",
+            Desc = "Paste your Private Server Code here to always join your private server",
+            Placeholder = "Example: 16055572089259659857100802598629",
+            Value = Globals.PrivateCode or "",
+            ClearTextOnFocus = false,
+            Callback = function(text)
+                local validated = text
+
+                if text ~= "" and not text:match("^%d+$") then
+                    validated = ""
+                end
+
+                Globals.PrivateCode = validated
+                
+                SetSetting("PrivateCode", validated)
+            end
+        })
+    end
 
     Automation:Toggle({
     Title = "Auto Ready Up",
@@ -1454,6 +1580,7 @@ local Interactive = Window:Tab({Title = "Interactive", Icon = "mouse-pointer-cli
     
     local CoinsLabel = Interactive:Label({Title = "Coins: 0", Desc = ""})
     local GemsLabel = Interactive:Label({Title = "Gems: 0", Desc = ""})
+    local TicketsLabel = Interactive:Label({Title = "Timescale Tickets: 0", Desc = ""})
     local LevelLabel = Interactive:Label({Title = "Level: 0", Desc = ""})
     local WinsLabel = Interactive:Label({Title = "Wins: 0", Desc = ""})
     local LosesLabel = Interactive:Label({Title = "Loses: 0", Desc = ""})
@@ -1579,6 +1706,7 @@ local Interactive = Window:Tab({Title = "Interactive", Icon = "mouse-pointer-cli
     local function UpdateStats()
         local coins = GetStatNumber("Coins") or 0
         local gems = GetStatNumber("Gems") or 0
+        local tickets = GetStatNumber("TimescaleTickets") or 0
         local lvl = GetStatNumber("Level") or 0
         local wins = GetStatNumber("Triumphs") or 0
         local loses = GetStatNumber("Loses") or 0
@@ -1600,6 +1728,7 @@ local Interactive = Window:Tab({Title = "Interactive", Icon = "mouse-pointer-cli
         end
         if CoinsLabel then CoinsLabel:SetTitle("Coins: " .. tostring(coins)) end
         if GemsLabel then GemsLabel:SetTitle("Gems: " .. tostring(gems)) end
+        if TicketsLabel then TicketsLabel:SetTitle("Timescale Tickets: " .. tostring(tickets)) end
         if LevelLabel then LevelLabel:SetTitle("Level: " .. tostring(lvl)) end
         if WinsLabel then WinsLabel:SetTitle("Wins: " .. tostring(wins)) end
         if LosesLabel then LosesLabel:SetTitle("Loses: " .. tostring(loses)) end
@@ -1635,7 +1764,7 @@ local Interactive = Window:Tab({Title = "Interactive", Icon = "mouse-pointer-cli
         obj:GetAttributeChangedSignal("Next"):Connect(QueueStatsUpdate)
     end
 
-    local StatNames = {"Coins", "Gems", "Level", "Triumphs", "Loses", "Experience"}
+    local StatNames = {"Coins", "Gems", "TimescaleTickets", "Level", "Triumphs", "Loses", "Experience"}
     local ExpAttrNames = {
         "ExperienceMax",
         "ExperienceNeeded",
@@ -1814,19 +1943,12 @@ local Configuration = Window:Tab({Title = "Configuration", Icon = "sliders-horiz
         Value = Globals.WebhookURL,
         ClearTextOnFocus = true,
         Callback = function(value)
-            if value ~= "" and value:find("https://discord.com/api/webhooks/") then
-                SetSetting("WebhookURL", value)
+            SetSetting("WebhookURL", value) 
 
+            if value ~= "" and value:find("https://discord.com/api/webhooks/") then
                 Window:Notify({
                     Title = "ADS",
                     Desc = "Webhook is successfully set!",
-                    Time = 3,
-                    Type = "normal"
-                })
-            else
-                Window:Notify({
-                    Title = "ADS",
-                    Desc = "Invalid Webhook URL!",
                     Time = 3,
                     Type = "normal"
                 })
@@ -1858,7 +1980,7 @@ local Configuration = Window:Tab({Title = "Configuration", Icon = "sliders-horiz
                     Time = 3,
                     Type = "normal"
                 })
-            SaveSettings()
+            LoadSettings()
         end
     })
 
@@ -1920,40 +2042,23 @@ end
 Window:Line()
 
 local Strategies = Window:Tab({Title = "Strategies", Icon = "clipboard-list"}) do
-    Strategies:Section({Title = "Information"})
-    Strategies:Label({
-        Title = "Strategies are available on our discord server at discord.gg/aetherhub", 
-        Desc = ""
-    })
 
---[[
     Strategies:Section({Title = "Survival Strategies"})
     Strategies:Toggle({
-        Title = "Frost Mode",
-        Desc = "Skill tree: MAX\n\nTowers:\nGolden Scout,\nFirework Technician,\nHacker,\nBrawler,\nDJ Booth,\nCommander,\nEngineer,\nAccelerator,\nTurret,\nMercenary Base",
-        Value = Globals.Frost,
+        Title = "Easy Mode (Summer Castle)",
+        Desc = "Requires: Normal Scout\nMap: Summer Castle",
+        Value = Globals.Easy,
         Callback = function(v)
-            SetSetting("Frost", v)
+            Globals.Easy = v
+            SetSetting("Easy", v)
 
             if v then
-                 task.spawn(function()
-                    local url = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Frost.lua"
-                    local content = game:HttpGet(url)
-
-                    while not (TDS and TDS.Loadout) do
-                        task.wait(0.5) 
-                    end
-
-                    local func, err = loadstring(content)
-                    if func then
-                        func() 
-                        Window:Notify({ Title = "ADS", Desc = "Running...", Time = 3 })
-                    end
-                end)
+                StartEasyMode()
             end
         end
     })
 
+--[[
     Strategies:Toggle({
         Title = "Fallen Mode",
         Desc = "Skill tree: Not needed\n\nTowers:\nGolden Scout,\nBrawler,\nMercenary Base,\nElectroshocker,\nEngineer",
@@ -2121,7 +2226,7 @@ local Settings = Window:Tab({Title = "Settings", Icon = "settings"}) do
                     Time = 3,
                     Type = "normal"
                 })
-            LoadSettings()
+            SaveSettings()
         end
     })
 
@@ -2134,7 +2239,7 @@ local Settings = Window:Tab({Title = "Settings", Icon = "settings"}) do
                     Time = 3,
                     Type = "normal"
                 })
-            SaveSettings()
+            LoadSettings()
         end
     })
 
@@ -2250,19 +2355,12 @@ local Settings = Window:Tab({Title = "Settings", Icon = "settings"}) do
         Value = Globals.WebhookURL,
         ClearTextOnFocus = true,
         Callback = function(value)
-            if value ~= "" and value:find("https://discord.com/api/webhooks/") then
-                SetSetting("WebhookURL", value)
+            SetSetting("WebhookURL", value) 
 
+            if value ~= "" and value:find("https://discord.com/api/webhooks/") then
                 Window:Notify({
                     Title = "ADS",
                     Desc = "Webhook is successfully set!",
-                    Time = 3,
-                    Type = "normal"
-                })
-            else
-                Window:Notify({
-                    Title = "ADS",
-                    Desc = "Invalid Webhook URL!",
                     Time = 3,
                     Type = "normal"
                 })
@@ -2299,7 +2397,7 @@ mouse.Button1Down:Connect(function()
     if StackEnabled and StackSphere and SelectedTower then
         local pos = StackSphere.Position
         local newpos = Vector3.new(pos.X, pos.Y + 25, pos.Z)
-        RemoteFunc:InvokeServer("Troops", "Pl\208\176ce", {Rotation = CFrame.new(), Position = newpos}, SelectedTower)
+        RemoteFunc:InvokeServer("Troops", "Place", {Rotation = CFrame.new(), Position = newpos}, SelectedTower)
     end
 end)
 
@@ -2412,14 +2510,14 @@ local function GetAllRewards()
     return results
 end
 
-local function SmartTeleportToLobby()
+SmartTeleportToLobby = function()
     local lobbyId = 3260590327
     
     pcall(function()
-        if TDS.PrivateCode and TDS.PrivateCode ~= "" then
+        if not IsMobile and Globals.PrivateCode and Globals.PrivateCode ~= "" then
             game:GetService("ExperienceService"):LaunchExperience({
                 placeId = lobbyId, 
-                linkCode = TDS.PrivateCode
+                linkCode = Globals.PrivateCode
             })
         else
             TeleportService:Teleport(lobbyId)
@@ -2456,7 +2554,7 @@ local function RejoinMatch()
     local success = false
     local res
 
-    if TDS.PrivateCode and TDS.PrivateCode ~= "" then
+    if Globals.PrivateCode and Globals.PrivateCode ~= "" and not IsMobile then
         Logger:Log("Private server code detected. Returning to private lobby...")
         SmartTeleportToLobby()
         task.wait(9e9)
@@ -2679,19 +2777,53 @@ end
 
 local function CastModifierVote(ModsTable)
     local BulkModifiers = ReplicatedStorage:WaitForChild("Network"):WaitForChild("Modifiers"):WaitForChild("RF:BulkVoteModifiers")
+    local ModRep = ReplicatedStorage:WaitForChild("StateReplicators"):FindFirstChild("ModifierReplicator")
 
-    local SelectedMods = {}
-
-    if ModsTable and #ModsTable > 0 then
-        for _, modName in ipairs(ModsTable) do
-            SelectedMods[modName] = true
+    local Available = {}
+    if ModRep then
+        local raw = ModRep:GetAttribute("Available")
+        if type(raw) == "string" then
+            local clean = raw:match("{.+}")
+            if clean then
+                pcall(function()
+                    Available = HttpService:JSONDecode(clean)
+                end)
+            end
         end
     end
 
-    pcall(function()
-        BulkModifiers:InvokeServer(SelectedMods)
-        Logger:Log("Successfully casted modifier votes.")
-    end)
+    local SelectedMods = {}
+    local missingMods = {}
+
+    if ModsTable then
+        for k, v in pairs(ModsTable) do
+            local modName = type(k) == "string" and k or v
+            
+            if type(modName) == "string" then
+                if Available[modName] == true then
+                    SelectedMods[modName] = true
+                else
+                    table.insert(missingMods, modName)
+                end
+            end
+        end
+    end
+
+    if #missingMods > 0 then
+        Window:Notify({
+            Title = "ADS",
+            Desc = "Locked (Skipped) modifiers: " .. table.concat(missingMods, ", "),
+            Time = 50,
+            Type = "error"
+        })
+    end
+
+    if next(SelectedMods) then
+        pcall(function()
+            BulkModifiers:InvokeServer(SelectedMods)
+            Logger:Log("Successfully casted modifier votes.")
+        end)
+    end
 end
 
 local function IsMapAvailable(name)
@@ -2702,15 +2834,26 @@ local function IsMapAvailable(name)
         end
     end
 
-repeat
+    local hasVoted = false
+
+    repeat
         local IntermissionFrame = PlayerGui:WaitForChild("ReactGameIntermission"):WaitForChild("Frame")
-        local VetoText = IntermissionFrame:WaitForChild("buttons"):WaitForChild("veto"):WaitForChild("value").Text
+        local VetoValue = IntermissionFrame.buttons.veto.value
+        local VetoText = VetoValue.Text
         
-        if IntermissionFrame.Visible and VetoText:match("Veto %(0/") then 
-            RemoteEvent:FireServer("LobbyVoting", "Veto") 
+        if VetoText ~= "" then
+            if not VetoText:find("Veto") then
+                return false 
+            end
+
+            local currentStr, totalStr = VetoText:match("(%d+)/(%d+)")
+            local current, total = tonumber(currentStr), tonumber(totalStr)
+
+            if not hasVoted and total and total > 0 and current == 0 then
+                RemoteEvent:FireServer("LobbyVoting", "Veto")
+                hasVoted = true
+            end
         end
-        
-        wait(1)
 
         local found = false
         for _, g in ipairs(workspace:GetDescendants()) do
@@ -2723,9 +2866,12 @@ repeat
             end
         end
 
-        local TotalPlayer = #PlayersService:GetChildren()
+        wait(1)
 
-    until found or VetoText == "Veto ("..TotalPlayer.."/"..TotalPlayer..")"
+        local TotalPlayer = #Players:GetChildren()
+        local isFull = VetoText == "Veto ("..TotalPlayer.."/"..TotalPlayer..")"
+
+    until found or isFull
 
     for _, g in ipairs(workspace:GetDescendants()) do
         if g:IsA("SurfaceGui") and g.Name == "MapDisplay" then
@@ -2887,7 +3033,7 @@ local function DoPlaceTower(TName, TPos, ...)
     Logger:Log("Placing tower: " .. TName)
     while true do
         local ok, res = pcall(function()
-            return RemoteFunc:InvokeServer("Troops", "Pl\208\176ce", {
+            return RemoteFunc:InvokeServer("Troops", "Place", {
                 Rotation = CFrame.new(),
                 Position = TPos
             }, TName, unpack(args))
@@ -3013,23 +3159,30 @@ end
 -- // public api
 -- lobby
 function TDS:Mode(difficulty, code)
-    if code then
-        self.PrivateCode = tostring(code)
+    local targetCode = ""
+
+    if not IsMobile then
+        if code and code ~= "" then
+            targetCode = code
+        elseif Globals.PrivateCode then
+            targetCode = Globals.PrivateCode
+        end
     end
+
+    self.PrivateCode = tostring(targetCode)
 
     if GameState ~= "LOBBY" then 
         return false 
     end
 
-    if code ~= nil and not MarketplaceService:UserOwnsGamePassAsync(LocalPlayer.UserId, 10518590) then
+    if targetCode ~= "" and not MarketplaceService:UserOwnsGamePassAsync(LocalPlayer.UserId, 10518590) then
         local ServerType = game:GetService('RobloxReplicatedStorage').GetServerType:InvokeServer()
         
         if ServerType ~= "VIPServer" then
-            local args = {
+            game:GetService("ExperienceService"):LaunchExperience({
                 placeId = game.PlaceId, 
-                linkCode = tostring(code)
-            }
-            game:GetService("ExperienceService"):LaunchExperience(args)
+                linkCode = tostring(targetCode)
+            })
             return true
         end
     end
@@ -3226,7 +3379,7 @@ function TDS:GameInfo(name, list)
     local VoteGui = PlayerGui:WaitForChild("ReactGameIntermission", 30)
     if not (VoteGui and VoteGui.Enabled and VoteGui:WaitForChild("Frame", 5)) then return end
 
-    local modifiers = (list and #list > 0) and list or Globals.Modifiers
+    local modifiers = (list and next(list)) and list or Globals.Modifiers
 
     CastModifierVote(modifiers)
 
@@ -4121,6 +4274,10 @@ task.spawn(function()
             StartAutoReady()
         end
 
+        if Globals.Easy and not EasyModeRunning then
+            StartEasyMode()
+        end
+
         task.wait(1)
     end
 end)
@@ -4130,11 +4287,5 @@ if Globals.ClaimRewards and not AutoClaimRewards then
 end
 
 MissionsUIFix()
-
-game:GetService("GuiService").ErrorMessageChanged:Connect(function()
-    pcall(function()
-        game:GetService("TeleportService"):TeleportReconnect()
-    end)
-end)
 
 return TDS
