@@ -2085,63 +2085,24 @@ local Configuration = Window:Tab({Title = "Configuration", Icon = "sliders-horiz
     Configuration:Section({Title = "Experimental Features"})
     
     Configuration:Toggle({
-        Title = "Sticker Spam (Max)",
-        Desc = "Максимально агрессивная версия. Сильно роняет FPS у всех вокруг. Используй с осторожностью!",
+        Title = "Sticker Spam",
+        Desc = "This will drop everyones FPS to like 5 (you will not be able to see this unless you have an alt)",
         Value = false,
         Callback = function(v)
-            _G.StickerSpam = v
+            StickerSpam = v
 
-            if _G.StickerSpam then
-                local ReplicatedStorage = game:GetService("ReplicatedStorage")
-                local StickerRemote = ReplicatedStorage:WaitForChild("Network"):WaitForChild("Sticker"):WaitForChild("URE:Show")
-
-                local Stickers = {
-                    "Flex", "Chilly", "Shrug", "CHOMP", "Not The Same",
-                    "Worried Scout", "Cookie Scout", "Lock In", "GG",
-                    "Silly", "Dead Stare", "Quack", "WOW"
-                }
-
-                -- Запускаем 12 агрессивных потоков
-                for i = 1, 12 do
-                    task.spawn(function()
-                        while _G.StickerSpam do
-                            for _, name in ipairs(Stickers) do
-                                if not _G.StickerSpam then break end
-                                pcall(function()
-                                    StickerRemote:FireServer(name)
-                                end)
-                            end
-                            task.wait()
-                        end
-                    end)
-                end
-
-                -- Дополнительный супер-быстрый поток на Flex
+            if StickerSpam then
                 task.spawn(function()
-                    while _G.StickerSpam do
-                        for i = 1, 600 do
-                            if not _G.StickerSpam then break end
-                            pcall(function()
-                                StickerRemote:FireServer("Flex")
-                            end)
+                    while StickerSpam do
+                        for i = 1, 9999 do
+                            if not StickerSpam then break end
+
+                            local args = {"Flex"}
+                            game:GetService("ReplicatedStorage"):WaitForChild("Network"):WaitForChild("Sticker"):WaitForChild("URE:Show"):FireServer(unpack(args))
                         end
-                        task.wait(0.02)
+                        task.wait()
                     end
                 end)
-
-                Window:Notify({
-                    Title = "Lag Machine",
-                    Desc = "Максимальный спам запущен (13 потоков)",
-                    Time = 4,
-                    Type = "normal"
-                })
-            else
-                Window:Notify({
-                    Title = "Lag Machine",
-                    Desc = "Остановлено",
-                    Time = 3,
-                    Type = "normal"
-                })
             end
         end
     })
